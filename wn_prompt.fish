@@ -21,8 +21,8 @@ function wn_prompt
 
         # Truncate the parent directory if its length exceeds 10 characters
         if test (string length $parent_dir) -gt 10
-            # Truncate the parent directory (first 7 characters + ellipsis)
-            set parent_dir (string sub -s 1 -l 9 $parent_dir)'…'
+            # Truncate the parent directory (first 10 characters + ellipsis)
+            set parent_dir (string sub -s 1 -l 10 $parent_dir)'…'
         end
 
         # Format the prompt output
