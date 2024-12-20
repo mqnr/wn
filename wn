@@ -99,7 +99,7 @@ create_workspace() {
     local node_path="$category_dir/$workspace_name"
     mkdir -p "$node_path/src"
     mkdir -p "$node_path/submission"
-    touch "$node_path/MAKEFILE"
+    touch "$node_path/Makefile"
     touch "$node_path/README.md"
     case "$2" in
         "--select"|"-s")
