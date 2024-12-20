@@ -1,0 +1,224 @@
+#!/bin/sh
+
+# check that required commands are present
+for cmd in fzf realpath; do
+    if ! command -v "$cmd" > /dev/null 2>&1; then
+        echo "wn: required command \"$cmd\" not found" >&2
+        exit 1
+    fi
+done
+
+PROGRAM_NAME="wn"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/$PROGRAM_NAME"
+
+ensure_data_dir() {
+    mkdir -p "$DATA_DIR"
+}
+
+usage() {
+    cat << EOF
+Navigate workspaces.
+
+Usage:
+  wn setup
+  wn root
+  wn root set <path>
+  wn (category|workspace)
+  wn (category|workspace) new <name> [path] [--select]
+  wn (category|workspace) (rename|select|remove) <name>
+  wn -h | --help
+  wn --version
+
+Options:
+  -h --help       Show this screen.
+  --version       Show version.
+EOF
+}
+
+version() {
+    echo "$PROGRAM_NAME version 1.0.0"
+}
+
+get_node_path() {
+    case "$1" in
+        "root" | "category" | "workspace")
+            if [ ! -f "$DATA_DIR/$1" ]; then
+                echo "wn: \"$1\" is not configured" >&2
+                return 1
+            fi
+            cat "$DATA_DIR/$1"
+            ;;
+        *)
+            echo "wn: invalid node type \"$1\"" >&2
+            return 1
+            ;;
+    esac
+}
+
+set_node() {
+    echo "$2" > "$DATA_DIR/$1"
+}
+
+list_directories() {
+    [ -d "$1" ] || { echo "wn: \"$1\" is not a valid directory" >&2; return 1; }
+    find "$1" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort
+}
+
+list_categories() {
+    list_directories "$(get_node_path root)"
+}
+
+list_workspaces() {
+    list_directories "$(get_node_path category)"
+}
+
+wizard_category() {
+    local category_name
+    category_name=$(list_categories | fzf --prompt="Select category: ") || return 1
+    echo "$(get_node_path root)/$category_name"
+}
+
+wizard_workspace() {
+    local workspace_name
+    workspace_name=$(list_workspaces | fzf --prompt="Select workspace: ") || return 1
+    echo "$(get_node_path category)/$workspace_name"
+}
+
+create_category() {
+    local category_name="$1"
+    local root_dir
+    root_dir=$(get_node_path root) || return 1
+    mkdir -p "$root_dir/$category_name"
+    echo "Category \"$category_name\" created."
+}
+
+create_workspace() {
+    local workspace_name="$1"
+    local category_dir
+    category_dir=$(get_node_path category) || return 1
+    local node_path="$category_dir/$workspace_name"
+    mkdir -p "$node_path/src"
+    mkdir -p "$node_path/submission"
+    touch "$node_path/MAKEFILE"
+    touch "$node_path/README.md"
+    case "$2" in
+        "--select"|"-s")
+            set_node "workspace" "$node_path"
+            echo "Workspace \"$workspace_name\" and selected."
+            ;;
+        *)
+            echo "Workspace \"$workspace_name\" created."
+            ;;
+    esac
+}
+
+rename_node() {
+    local node_type="$1"
+    local old_name="$2"
+    local new_name="$3"
+    local parent_dir
+    parent_dir=$(get_node_path "$node_type") || return 1
+    [ -d "$parent_dir/$old_name" ] || { echo "wn: \"$old_name\" not found" >&2; return 1; }
+    mv "$parent_dir/$old_name" "$parent_dir/$new_name"
+    echo "$node_type \"$old_name\" renamed to \"$new_name\"."
+}
+
+remove_node() {
+    local node_type="$1"
+    # local name="$2"
+    # local parent_dir
+    local full_path=$(get_node_path "$node_type") || return 1
+
+    if [ ! -d "$full_path" ]; then
+        echo "wn: $node_type \"$full_path\" not found" >&2
+        return 1
+    fi
+
+    # confirmation prompt
+    echo "Are you sure you want to delete the $node_type \"$full_path\"? [yN]"
+    read -r confirmation
+    case "$confirmation" in
+        [Yy]*) 
+            rm -r "$full_path"
+            echo "$node_type \"$name\" removed."
+            ;;
+        *)
+            echo "Operation cancelled."
+            ;;
+    esac
+}
+
+select_node() {
+    local node_type="$1"
+    local selected_node
+    case "$node_type" in
+        "category")
+            selected_node=$(wizard_category) || return 1
+            ;;
+        "workspace")
+            selected_node=$(wizard_workspace) || return 1
+            ;;
+        *)
+            echo "wn: invalid node type \"$node_type\"" >&2
+            return 1
+            ;;
+    esac
+    set_node "$node_type" "$selected_node"
+    echo "$node_type selected: $(basename "$selected_node")"
+}
+
+show_current_node() {
+    local node_type="$1"
+    if current_path=$(get_node_path "$node_type" 2>/dev/null); then
+        echo "$current_path"
+    else
+        echo "wn: no $node_type currently selected"
+    fi
+}
+
+main() {
+    ensure_data_dir
+    case "$1" in
+        setup)
+            ensure_data_dir
+            echo "Enter the root path for workspaces:"
+            read -r root_path
+            root_path=$(realpath "$root_path")
+            [ -d "$root_path" ] || { echo "wn: \"$root_path\" is not a valid directory" >&2; return 1; }
+            set_node "root" "$root_path"
+            echo "Workspace root set to: $root_path"
+            ;;
+        root)
+            case "$2" in
+                set) shift 2; set_node "root" "$(realpath "$1")" ;;
+                "") get_node_path "root" ;;
+                *) usage ;;
+            esac
+            ;;
+        category)
+            case "$2" in
+                new) shift 2; create_category "$1" ;;
+                rename) shift 2; rename_node "category" "$1" "$2" ;;
+                remove) shift 2; remove_node "category" ;;
+                select) select_node "category" ;;
+                "") show_current_node "category" ;;
+                *) usage ;;
+            esac
+            ;;
+        workspace)
+            case "$2" in
+                new) shift 2; create_workspace "$1" "$2" ;;
+                rename) shift 2; rename_node "workspace" "$1" "$2" ;;
+                remove) shift 2; remove_node "workspace" ;;
+                select) select_node "workspace" ;;
+                "") show_current_node "workspace" ;;
+                *) usage ;;
+            esac
+            ;;
+        -h|--help) usage ;;
+        --version) version ;;
+        *) usage; exit 1 ;;
+    esac
+}
+
+main "$@"
